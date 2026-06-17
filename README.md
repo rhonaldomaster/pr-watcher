@@ -6,7 +6,7 @@ A local macOS agent that monitors GitHub for pull requests where your review is 
 
 1. Runs every 30 minutes during work hours (Mon–Fri, 8am–7pm COT)
 2. Fetches all open PRs where `review-requested:@me` via the GitHub API
-3. Skips PRs already reviewed at the current commit SHA (state tracked in `rhonaldomaster/claude-skills/pr-watcher-state.json`)
+3. Skips PRs already reviewed at the current commit SHA (state tracked in a JSON file in a git repo of your choice)
 4. Detects the repo stack and picks the matching review skill:
    - `Gemfile` → Rails
    - `composer.json` + `functions.php` → WordPress
@@ -24,7 +24,7 @@ A local macOS agent that monitors GitHub for pull requests where your review is 
 - [GitHub CLI](https://cli.github.com/) (`gh`) authenticated with your account
 - `jq` installed (`brew install jq`)
 - macOS (uses launchd)
-- Review skills in `/Users/rhonalf.martinez/projects/claude-skills/pr-cycle/skills/`
+- Review skills directory (configure `SKILLS_DIR` in the script)
 
 ## Setup
 
@@ -35,7 +35,7 @@ A local macOS agent that monitors GitHub for pull requests where your review is 
    chmod +x ~/.claude/scripts/pr-watcher.sh
    ```
 
-2. Edit the plist and update `YOUR_USERNAME` to match your macOS username, then install it:
+2. Edit the plist and update the paths to match your macOS username, then install it:
    ```bash
    cp com.rhonalf.pr-watcher.plist ~/Library/LaunchAgents/
    launchctl load ~/Library/LaunchAgents/com.rhonalf.pr-watcher.plist
@@ -70,4 +70,4 @@ tail -f ~/.claude/logs/pr-watcher.log
 
 ## State file
 
-Reviewed PRs and their commit SHAs are tracked in `rhonaldomaster/claude-skills/pr-watcher-state.json`. When a developer pushes new commits, the SHA changes and the watcher re-reviews automatically.
+Reviewed PRs and their commit SHAs are tracked in `pr-watcher-state.json` inside whatever repo you configure as `STATE_FILE` in the script. When a developer pushes new commits, the SHA changes and the watcher re-reviews automatically.
