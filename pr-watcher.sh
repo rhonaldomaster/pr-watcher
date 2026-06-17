@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SKILLS_DIR="/Users/rhonalf.martinez/projects/claude-skills/pr-cycle/skills"
-STATE_FILE="/Users/rhonalf.martinez/projects/claude-skills/pr-watcher-state.json"
+STATE_FILE="/Users/rhonalf.martinez/projects/pr-watcher/pr-watcher-state.json"
 LOG_FILE="/Users/rhonalf.martinez/.claude/logs/pr-watcher.log"
 CLAUDE_BIN="/Users/rhonalf.martinez/.local/bin/claude"
 GH_BIN="/opt/homebrew/bin/gh"
@@ -148,7 +148,7 @@ $SKILL_CONTENT"
   echo "$STATE" > "$STATE_FILE"
 
   # Commit state update
-  cd /Users/rhonalf.martinez/projects/claude-skills
+  cd /Users/rhonalf.martinez/projects/pr-watcher
   git add pr-watcher-state.json
   git diff --staged --quiet || git commit -m "chore: pr-watcher state [$STATE_KEY]" 2>/dev/null || true
   git push 2>/dev/null || true
