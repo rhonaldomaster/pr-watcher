@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SKILLS_DIR="/Users/rhonalf.martinez/projects/claude-skills/pr-cycle/skills"
-STATE_FILE="/Users/rhonalf.martinez/projects/pr-watcher/pr-watcher-state.json"
-LOG_FILE="/Users/rhonalf.martinez/.claude/logs/pr-watcher.log"
-CLAUDE_BIN="/Users/rhonalf.martinez/.local/bin/claude"
+# write your dir here
+USER_DIR=""
+
+SKILLS_DIR="$USER_DIR/projects/claude-skills/pr-cycle/skills"
+STATE_FILE="$USER_DIR/projects/pr-watcher/pr-watcher-state.json"
+LOG_FILE="$USER_DIR/.claude/logs/pr-watcher.log"
+CLAUDE_BIN="$USER_DIR/.local/bin/claude"
 GH_BIN="/opt/homebrew/bin/gh"
 
 mkdir -p "$(dirname "$LOG_FILE")"
