@@ -151,7 +151,7 @@ $SKILL_CONTENT"
   echo "$STATE" > "$STATE_FILE"
 
   # Commit state update
-  cd /Users/rhonalf.martinez/projects/pr-watcher
+  cd "$USER_DIR"/projects/pr-watcher
   git add pr-watcher-state.json
   git diff --staged --quiet || git commit -m "chore: pr-watcher state [$STATE_KEY]" 2>/dev/null || true
   git push 2>/dev/null || true
