@@ -6,12 +6,35 @@ STATE_FILE="/Users/rhonalf.martinez/projects/pr-watcher/pr-watcher-state.json"
 LOG_FILE="/Users/rhonalf.martinez/.claude/logs/pr-watcher.log"
 CLAUDE_BIN="/Users/rhonalf.martinez/.local/bin/claude"
 GH_BIN="/opt/homebrew/bin/gh"
+LOCK_FILE="/tmp/pr-watcher.lock"
+CLAUDE_TIMEOUT=600  # 10 min max per review
+MAX_REVIEWS_PER_RUN=5
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
+
+rotate_log() {
+  local max_lines=2000
+  if [[ -f "$LOG_FILE" ]]; then
+    local line_count
+    line_count=$(wc -l < "$LOG_FILE")
+    if [[ "$line_count" -gt "$max_lines" ]]; then
+      tail -n "$max_lines" "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+    fi
+  fi
+}
+
+# Lock — prevent concurrent runs
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  log "Another instance is running. Exiting."
+  exit 0
+fi
+
+rotate_log
 
 # Work hours check: Mon-Fri, 8am-7pm COT (UTC-5)
 HOUR=$(TZ="America/Bogota" date +%H)
@@ -23,6 +46,13 @@ fi
 
 log "Starting PR watcher run."
 
+# Resolve GitHub login dynamically
+GH_LOGIN=$("$GH_BIN" api user --jq '.login' 2>/dev/null) || {
+  log "ERROR: Could not resolve GitHub login. Is gh authenticated?"
+  exit 1
+}
+log "Watching PRs for: $GH_LOGIN"
+
 # Load state
 if [[ -f "$STATE_FILE" ]]; then
   STATE=$(cat "$STATE_FILE")
@@ -30,10 +60,10 @@ else
   STATE='{"reviewed":{}}'
 fi
 
-# Fetch PRs where review is requested (use API directly — avoids needing a git repo context)
-PRS=$("$GH_BIN" api graphql -f query='
+# Fetch PRs where review is requested
+PRS=$("$GH_BIN" api graphql -f query="
 {
-  search(query: "is:pr is:open review-requested:rhonaldomaster", type: ISSUE, first: 50) {
+  search(query: \"is:pr is:open review-requested:$GH_LOGIN\", type: ISSUE, first: 50) {
     nodes {
       ... on PullRequest {
         number
@@ -47,7 +77,15 @@ PRS=$("$GH_BIN" api graphql -f query='
       }
     }
   }
-}' --jq '.data.search.nodes' 2>/dev/null || echo "[]")
+}" --jq '.data.search.nodes' 2>/dev/null) || {
+  log "ERROR: GitHub API request failed."
+  exit 1
+}
+
+if [[ -z "$PRS" || "$PRS" == "null" ]]; then
+  log "ERROR: Could not parse PR list from GitHub API."
+  exit 1
+fi
 
 PR_COUNT=$(echo "$PRS" | jq 'length')
 log "Found $PR_COUNT open PR(s) awaiting review."
@@ -62,6 +100,11 @@ SKIPPED=0
 UNKNOWN=0
 
 for i in $(seq 0 $((PR_COUNT - 1))); do
+  if [[ "$REVIEWED" -ge "$MAX_REVIEWS_PER_RUN" ]]; then
+    log "Reached MAX_REVIEWS_PER_RUN=$MAX_REVIEWS_PER_RUN. Stopping."
+    break
+  fi
+
   PR=$(echo "$PRS" | jq ".[$i]")
   PR_NUMBER=$(echo "$PR" | jq -r '.number')
   PR_TITLE=$(echo "$PR" | jq -r '.title')
@@ -72,7 +115,6 @@ for i in $(seq 0 $((PR_COUNT - 1))); do
 
   log "Checking $STATE_KEY (SHA: ${CURRENT_SHA:0:8})"
 
-  # Check if already reviewed at this SHA
   LAST_SHA=$(echo "$STATE" | jq -r --arg key "$STATE_KEY" '.reviewed[$key] // ""')
   if [[ "$LAST_SHA" == "$CURRENT_SHA" ]]; then
     log "SKIPPED: $STATE_KEY — already reviewed at current SHA"
@@ -80,18 +122,19 @@ for i in $(seq 0 $((PR_COUNT - 1))); do
     continue
   fi
 
-  # Clone repo to detect type
+  # Clone into a tmp dir, clean up explicitly after each iteration
   TMP_DIR=$(mktemp -d)
-  trap "rm -rf $TMP_DIR" EXIT
+  cleanup_tmp() { rm -rf "$TMP_DIR"; }
 
   log "Cloning $REPO_OWNER/$REPO_NAME to detect stack..."
-  "$GH_BIN" repo clone "$REPO_OWNER/$REPO_NAME" "$TMP_DIR" -- --depth=1 --quiet 2>/dev/null || {
+  if ! "$GH_BIN" repo clone "$REPO_OWNER/$REPO_NAME" "$TMP_DIR" -- --depth=1 --quiet 2>/dev/null; then
     log "ERROR: Could not clone $REPO_OWNER/$REPO_NAME — skipping"
+    cleanup_tmp
     UNKNOWN=$((UNKNOWN + 1))
     continue
-  }
+  fi
 
-  cd "$TMP_DIR"
+  pushd "$TMP_DIR" > /dev/null
   "$GH_BIN" pr checkout "$PR_NUMBER" --quiet 2>/dev/null || true
 
   # Detect stack
@@ -108,11 +151,12 @@ for i in $(seq 0 $((PR_COUNT - 1))); do
     SKILL="frontend-nextjs"
   fi
 
-  cd - > /dev/null
+  popd > /dev/null
+  cleanup_tmp
 
   if [[ -z "$SKILL" ]]; then
     log "UNKNOWN stack for $STATE_KEY — sending notification"
-    "$CLAUDE_BIN" --dangerously-skip-permissions -p \
+    timeout "$CLAUDE_TIMEOUT" "$CLAUDE_BIN" --dangerously-skip-permissions -p \
       "Send a push notification with this exact message: PR #$PR_NUMBER en $REPO_NAME — stack desconocido, revision manual requerida" \
       2>/dev/null || true
     UNKNOWN=$((UNKNOWN + 1))
@@ -120,6 +164,12 @@ for i in $(seq 0 $((PR_COUNT - 1))); do
   fi
 
   SKILL_FILE="$SKILLS_DIR/$SKILL/SKILL.md"
+  if [[ ! -f "$SKILL_FILE" ]]; then
+    log "ERROR: Skill file not found: $SKILL_FILE — skipping"
+    UNKNOWN=$((UNKNOWN + 1))
+    continue
+  fi
+
   log "Running $SKILL review for $STATE_KEY..."
 
   SKILL_CONTENT=$(cat "$SKILL_FILE")
@@ -136,26 +186,23 @@ Here is the skill to execute:
 
 $SKILL_CONTENT"
 
-  "$CLAUDE_BIN" --dangerously-skip-permissions -p "$PROMPT" \
-    --allowedTools "Bash,Read,Glob,Grep,Agent" \
-    2>>"$LOG_FILE" || {
-    log "ERROR: claude failed for $STATE_KEY"
-    continue
-  }
+  if timeout "$CLAUDE_TIMEOUT" "$CLAUDE_BIN" --dangerously-skip-permissions -p "$PROMPT" \
+      --allowedTools "Bash,Read,Glob,Grep,Agent" \
+      2>>"$LOG_FILE"; then
 
-  # Update state
-  STATE=$(echo "$STATE" | jq --arg key "$STATE_KEY" --arg sha "$CURRENT_SHA" '.reviewed[$key] = $sha')
-  echo "$STATE" > "$STATE_FILE"
-
-  # Commit state update
-  cd /Users/rhonalf.martinez/projects/pr-watcher
-  git add pr-watcher-state.json
-  git diff --staged --quiet || git commit -m "chore: pr-watcher state [$STATE_KEY]" 2>/dev/null || true
-  git push 2>/dev/null || true
-  cd - > /dev/null
-
-  log "REVIEWED: $STATE_KEY with skill $SKILL"
-  REVIEWED=$((REVIEWED + 1))
+    # Update and persist state
+    STATE=$(echo "$STATE" | jq --arg key "$STATE_KEY" --arg sha "$CURRENT_SHA" '.reviewed[$key] = $sha')
+    echo "$STATE" > "$STATE_FILE"
+    log "REVIEWED: $STATE_KEY with skill $SKILL"
+    REVIEWED=$((REVIEWED + 1))
+  else
+    EXIT_CODE=$?
+    if [[ "$EXIT_CODE" -eq 124 ]]; then
+      log "TIMEOUT: $STATE_KEY — claude exceeded ${CLAUDE_TIMEOUT}s limit"
+    else
+      log "ERROR: claude failed (exit $EXIT_CODE) for $STATE_KEY"
+    fi
+  fi
 done
 
 log "Done. Reviewed: $REVIEWED | Skipped: $SKIPPED | Unknown stack: $UNKNOWN"

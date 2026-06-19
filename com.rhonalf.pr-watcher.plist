@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/rhonalf.martinez/.claude/scripts/pr-watcher.sh</string>
+    <string>/Users/rhonalf.martinez/projects/pr-watcher/pr-watcher.sh</string>
   </array>
 
   <key>StartInterval</key>
