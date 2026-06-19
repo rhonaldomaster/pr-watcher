@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SKILLS_DIR="/Users/rhonalf.martinez/projects/claude-skills/pr-cycle/skills"
-STATE_FILE="/Users/rhonalf.martinez/projects/pr-watcher/pr-watcher-state.json"
-LOG_FILE="/Users/rhonalf.martinez/.claude/logs/pr-watcher.log"
-CLAUDE_BIN="/Users/rhonalf.martinez/.local/bin/claude"
+# Set this to your home directory (e.g. /Users/yourname)
+USER_DIR="/Users/rhonalf.martinez"
+
+SKILLS_DIR="$USER_DIR/projects/claude-skills/pr-cycle/skills"
+STATE_FILE="$USER_DIR/projects/pr-watcher/pr-watcher-state.json"
+LOG_FILE="$USER_DIR/.claude/logs/pr-watcher.log"
+CLAUDE_BIN="$USER_DIR/.local/bin/claude"
 GH_BIN="/opt/homebrew/bin/gh"
 LOCK_FILE="/tmp/pr-watcher.lock"
 CLAUDE_TIMEOUT=600  # 10 min max per review
